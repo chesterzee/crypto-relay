@@ -1,7 +1,7 @@
-const VERSION = "2.2";
+const VERSION = "2.3";
 
 const BINANCE_API =
-  "https://fapi.binance.com/fapi/v1/ticker/price";
+  "https://fapi.binance.com/fapi/v1/ticker/24hr";
 
 const BINANCE_KLINES_API =
   "https://fapi.binance.com/fapi/v1/klines";
@@ -27,7 +27,7 @@ async function fetchJson(url: string) {
       method: "GET",
       headers: {
         "accept": "application/json",
-        "user-agent": "Mozilla/5.0 CryptoRelay/2.2"
+        "user-agent": "Mozilla/5.0 CryptoRelay/2.3"
       },
       signal: controller.signal
     });
@@ -85,8 +85,7 @@ function validLimit(limit: number) {
 
 function json(
   data: unknown,
-  status = 200,
-  headers: Record<string, string> = {}
+  status = 200
 ) {
   return Response.json(
     data,
@@ -95,195 +94,14 @@ function json(
       headers: {
         "access-control-allow-origin": "*",
         "access-control-allow-methods": "GET, OPTIONS",
-        "access-control-allow-headers": "Content-Type",
-        ...headers
+        "access-control-allow-headers": "Content-Type"
       }
     }
   );
 }
 
-/* =========================================================
-   INTERVAL HELPERS
-   ========================================================= */
-
-const BITGET_INTERVAL_MAP: Record<string, string> = {
-  "1m": "1m",
-  "3m": "3m",
-  "5m": "5m",
-  "15m": "15m",
-  "30m": "30m",
-  "1h": "1H",
-  "2h": "2H",
-  "4h": "4H",
-  "6h": "6H",
-  "12h": "12H",
-  "1d": "1D",
-  "3d": "3D",
-  "1w": "1W"
-};
-
-function intervalMilliseconds(interval: string) {
-  const map: Record<string, number> = {
-    "1m": 60_000,
-    "3m": 180_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "30m": 1_800_000,
-    "1h": 3_600_000,
-    "2h": 7_200_000,
-    "4h": 14_400_000,
-    "6h": 21_600_000,
-    "8h": 28_800_000,
-    "12h": 43_200_000,
-    "1d": 86_400_000,
-    "3d": 259_200_000,
-    "1w": 604_800_000,
-    "1M": 2_592_000_000
-  };
-
-  return map[interval] || 0;
-}
-
-/* =========================================================
-   BINANCE CLOSED CANDLE
-   =========================================================
-   Binance:
-   [
-     openTime,
-     open,
-     high,
-     low,
-     close,
-     volume,
-     closeTime,
-     ...
-   ]
-
-   Candle terakhir biasanya masih berjalan.
-   Kita hanya menganggap candle CLOSED jika closeTime <= now.
-   ========================================================= */
-
-function getBinanceClosedCandles(
-  data: unknown,
-  interval: string
-) {
-  if (!Array.isArray(data)) {
-    return [];
-  }
-
-  const now = Date.now();
-
-  return data.filter((candle: any) => {
-    if (!Array.isArray(candle)) return false;
-
-    const closeTime = Number(candle[6]);
-
-    if (!Number.isFinite(closeTime)) {
-      return false;
-    }
-
-    return closeTime <= now;
-  });
-}
-
-/* =========================================================
-   BITGET CLOSED CANDLE
-   =========================================================
-   Bitget:
-   [
-     timestamp,
-     open,
-     high,
-     low,
-     close,
-     baseVolume,
-     quoteVolume
-   ]
-
-   Bitget tidak memberikan closeTime secara langsung.
-   Jadi openTime + interval harus <= sekarang.
-   ========================================================= */
-
-function getBitgetClosedCandles(
-  data: unknown,
-  interval: string
-) {
-  if (!Array.isArray(data)) {
-    return [];
-  }
-
-  const duration = intervalMilliseconds(interval);
-
-  if (!duration) {
-    return [];
-  }
-
-  const now = Date.now();
-
-  return data.filter((candle: any) => {
-    if (!Array.isArray(candle)) return false;
-
-    const openTime = Number(candle[0]);
-
-    if (!Number.isFinite(openTime)) {
-      return false;
-    }
-
-    return openTime + duration <= now;
-  });
-}
-
-/* =========================================================
-   NORMALIZED CANDLE
-   ========================================================= */
-
-function normalizeBinanceCandle(candle: any) {
-  if (!Array.isArray(candle)) {
-    return null;
-  }
-
-  return {
-    openTime: Number(candle[0]),
-    open: Number(candle[1]),
-    high: Number(candle[2]),
-    low: Number(candle[3]),
-    close: Number(candle[4]),
-    volume: Number(candle[5]),
-    closeTime: Number(candle[6]),
-    raw: candle
-  };
-}
-
-function normalizeBitgetCandle(candle: any) {
-  if (!Array.isArray(candle)) {
-    return null;
-  }
-
-  const openTime = Number(candle[0]);
-
-  return {
-    openTime,
-    open: Number(candle[1]),
-    high: Number(candle[2]),
-    low: Number(candle[3]),
-    close: Number(candle[4]),
-    volume: Number(candle[5]),
-    quoteVolume: Number(candle[6]),
-    closeTime: openTime,
-    raw: candle
-  };
-}
-
-/* =========================================================
-   SERVER
-   ========================================================= */
-
 Deno.serve(async (request) => {
   const url = new URL(request.url);
-
-  /* =======================================================
-     CORS
-     ======================================================= */
 
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -306,9 +124,9 @@ Deno.serve(async (request) => {
     );
   }
 
-  /* =======================================================
-     HEALTH
-     ======================================================= */
+  // =========================================================
+  // HEALTH
+  // =========================================================
 
   if (url.pathname === "/health") {
     return json({
@@ -325,9 +143,21 @@ Deno.serve(async (request) => {
     });
   }
 
-  /* =======================================================
-     BINANCE TICKER
-     ======================================================= */
+  // =========================================================
+  // BINANCE FUTURES 24H TICKER
+  //
+  // PENTING:
+  // sebelumnya memakai /ticker/price
+  // sekarang memakai /ticker/24hr
+  //
+  // sehingga relay mengembalikan:
+  // lastPrice
+  // priceChangePercent
+  // highPrice
+  // lowPrice
+  // quoteVolume
+  // volume
+  // =========================================================
 
   if (url.pathname === "/binance") {
     const symbol = (
@@ -389,9 +219,9 @@ Deno.serve(async (request) => {
     }
   }
 
-  /* =======================================================
-     BINANCE CANDLES
-     ======================================================= */
+  // =========================================================
+  // BINANCE FUTURES CANDLES
+  // =========================================================
 
   if (url.pathname === "/binance-candles") {
     const symbol = (
@@ -399,15 +229,15 @@ Deno.serve(async (request) => {
       "BTCUSDT"
     ).toUpperCase();
 
-    const interval = (
+    const interval =
       url.searchParams.get("interval") ||
-      "5m"
-    ).toLowerCase();
+      "5m";
 
-    const limit = Number(
-      url.searchParams.get("limit") ||
-      "10"
-    );
+    const limit =
+      Number(
+        url.searchParams.get("limit") ||
+        "10"
+      );
 
     if (!validSymbol(symbol)) {
       return json(
@@ -457,46 +287,14 @@ Deno.serve(async (request) => {
     try {
       const started = Date.now();
 
-      /*
-       * Ambil 1 candle tambahan supaya:
-       * - candle aktif tetap tersedia
-       * - candle closed selalu tersedia
-       */
-      const requestLimit = Math.min(
-        limit + 2,
-        1500
-      );
-
       const apiUrl =
         `${BINANCE_KLINES_API}` +
         `?symbol=${encodeURIComponent(symbol)}` +
         `&interval=${encodeURIComponent(interval)}` +
-        `&limit=${requestLimit}`;
+        `&limit=${limit}`;
 
-      const result = await fetchJson(apiUrl);
-
-      const rawData =
-        Array.isArray(result.data)
-          ? result.data
-          : [];
-
-      const closedCandles =
-        getBinanceClosedCandles(
-          rawData,
-          interval
-        );
-
-      const normalizedClosed =
-        closedCandles
-          .map(normalizeBinanceCandle)
-          .filter(Boolean);
-
-      const closed =
-        normalizedClosed.length
-          ? normalizedClosed[
-              normalizedClosed.length - 1
-            ]
-          : null;
+      const result =
+        await fetchJson(apiUrl);
 
       return json(
         {
@@ -509,25 +307,7 @@ Deno.serve(async (request) => {
           limit,
           http: result.http,
           latency: Date.now() - started,
-
-          /*
-           * RAW COMPATIBILITY
-           */
-          data: result.data,
-
-          /*
-           * CLOSED ONLY
-           */
-          closed,
-
-          closedCandles:
-            normalizedClosed.slice(-limit),
-
-          /*
-           * DEBUG
-           */
-          candleCount: rawData.length,
-          closedCount: normalizedClosed.length
+          data: result.data
         },
         result.http === 200 ? 200 : 502
       );
@@ -553,9 +333,9 @@ Deno.serve(async (request) => {
     }
   }
 
-  /* =======================================================
-     BITGET TICKER
-     ======================================================= */
+  // =========================================================
+  // BITGET TICKER
+  // =========================================================
 
   if (url.pathname === "/bitget") {
     const symbol = (
@@ -621,9 +401,9 @@ Deno.serve(async (request) => {
     }
   }
 
-  /* =======================================================
-     BITGET CANDLES
-     ======================================================= */
+  // =========================================================
+  // BITGET FUTURES CANDLES
+  // =========================================================
 
   if (
     url.pathname === "/bitget-candles" ||
@@ -634,15 +414,15 @@ Deno.serve(async (request) => {
       "BTCUSDT"
     ).toUpperCase();
 
-    const interval = (
+    const interval =
       url.searchParams.get("interval") ||
-      "5m"
-    ).toLowerCase();
+      "5m";
 
-    const limit = Number(
-      url.searchParams.get("limit") ||
-      "10"
-    );
+    const limit =
+      Number(
+        url.searchParams.get("limit") ||
+        "10"
+      );
 
     if (!validSymbol(symbol)) {
       return json(
@@ -658,8 +438,24 @@ Deno.serve(async (request) => {
       );
     }
 
+    const bitgetIntervalMap: Record<string, string> = {
+      "1m": "1m",
+      "3m": "3m",
+      "5m": "5m",
+      "15m": "15m",
+      "30m": "30m",
+      "1h": "1H",
+      "2h": "2H",
+      "4h": "4H",
+      "6h": "6H",
+      "12h": "12H",
+      "1d": "1D",
+      "3d": "3D",
+      "1w": "1W"
+    };
+
     const bitgetInterval =
-      BITGET_INTERVAL_MAP[interval];
+      bitgetIntervalMap[interval];
 
     if (!bitgetInterval) {
       return json(
@@ -672,7 +468,7 @@ Deno.serve(async (request) => {
           interval,
           error: "Invalid interval",
           allowed:
-            Object.keys(BITGET_INTERVAL_MAP)
+            Object.keys(bitgetIntervalMap)
         },
         400
       );
@@ -697,73 +493,19 @@ Deno.serve(async (request) => {
     try {
       const started = Date.now();
 
-      const requestLimit = Math.min(
-        limit + 2,
-        1500
-      );
-
       const apiUrl =
         `${BITGET_CANDLES_API}` +
         `?symbol=${encodeURIComponent(symbol)}` +
         `&productType=USDT-FUTURES` +
         `&granularity=${encodeURIComponent(bitgetInterval)}` +
-        `&limit=${requestLimit}`;
+        `&limit=${limit}`;
 
       const result =
         await fetchJson(apiUrl);
 
-      /*
-       * Bitget response:
-       * {
-       *   code:"00000",
-       *   data:[...]
-       * }
-       */
-
-      let rawData: unknown[] = [];
-
-      if (
-        result.data &&
-        typeof result.data === "object" &&
-        "data" in result.data
-      ) {
-        const payload =
-          (result.data as any).data;
-
-        if (Array.isArray(payload)) {
-          rawData = payload;
-        }
-      }
-
-      const closedCandles =
-        getBitgetClosedCandles(
-          rawData,
-          interval
-        );
-
-      const normalizedClosed =
-        closedCandles
-          .map(normalizeBitgetCandle)
-          .filter(Boolean);
-
-      const closed =
-        normalizedClosed.length
-          ? normalizedClosed[
-              normalizedClosed.length - 1
-            ]
-          : null;
-
       return json(
         {
-          ok:
-            result.http === 200 &&
-            !!(
-              result.data &&
-              typeof result.data === "object" &&
-              (result.data as any).code ===
-                "00000"
-            ),
-
+          ok: result.http === 200,
           source: "BITGET",
           type: "klines",
           market: "FUTURES",
@@ -773,25 +515,7 @@ Deno.serve(async (request) => {
           limit,
           http: result.http,
           latency: Date.now() - started,
-
-          /*
-           * RAW BITGET RESPONSE
-           */
-          data: result.data,
-
-          /*
-           * CLOSED ONLY
-           */
-          closed,
-
-          closedCandles:
-            normalizedClosed.slice(-limit),
-
-          /*
-           * DEBUG
-           */
-          candleCount: rawData.length,
-          closedCount: normalizedClosed.length
+          data: result.data
         },
         result.http === 200 ? 200 : 502
       );
@@ -805,7 +529,6 @@ Deno.serve(async (request) => {
           market: "FUTURES",
           symbol,
           interval,
-          bitgetInterval,
           limit,
           http: 0,
           error:
@@ -817,10 +540,6 @@ Deno.serve(async (request) => {
       );
     }
   }
-
-  /* =======================================================
-     NOT FOUND
-     ======================================================= */
 
   return json(
     {
